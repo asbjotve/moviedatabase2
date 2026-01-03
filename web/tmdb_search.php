@@ -1,101 +1,119 @@
 <?php
+// TMDB movie search endpoint (legacy JSON format: {"data": [...]})
+// - No config.php dependency
+// - Uses $_GET['q'] and optional $_GET['year']
+// - Calls TMDB v3 search/movie
+// - Returns valid JSON for all error cases and exits
 
-require_once __DIR__ . '/config.php';
+header('Content-Type: application/json; charset=utf-8');
 
 /**
- * Legacy TMDB search endpoint.
- *
- * The existing frontend expects a JSON response on the form:
- *   {"data": [ ... ]}
- *
- * Keep using http_json() for outgoing HTTP calls, but map results into the
- * legacy structure (including baseImageUrl + poster mapping) and add optional
- * year filtering.
+ * Output JSON and exit.
  */
-
-$query = isset($_GET['query']) ? trim((string)$_GET['query']) : '';
-$year  = isset($_GET['year']) ? trim((string)$_GET['year']) : '';
-
-if ($query === '') {
-    header('Content-Type: application/json; charset=utf-8');
-    echo json_encode(['data' => []]);
+function respond($payload, int $statusCode = 200): void {
+    http_response_code($statusCode);
+    echo json_encode($payload, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
     exit;
 }
 
-// Build TMDB search URL
+/**
+ * Fetch and decode JSON via cURL.
+ *
+ * @return array{ok:bool,status:int,error?:string,body?:string,json?:mixed}
+ */
+function http_json(string $url, int $timeoutSeconds = 10): array {
+    $ch = curl_init($url);
+    if ($ch === false) {
+        return ['ok' => false, 'status' => 0, 'error' => 'Failed to initialize cURL'];
+    }
+
+    curl_setopt_array($ch, [
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_FOLLOWLOCATION => true,
+        CURLOPT_TIMEOUT => $timeoutSeconds,
+        CURLOPT_CONNECTTIMEOUT => $timeoutSeconds,
+        CURLOPT_SSL_VERIFYPEER => true,
+        CURLOPT_SSL_VERIFYHOST => 2,
+        CURLOPT_USERAGENT => 'moviedatabase2-tmdb-search/1.0',
+    ]);
+
+    $body = curl_exec($ch);
+    $errno = curl_errno($ch);
+    $errstr = curl_error($ch);
+    $status = (int) curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
+    curl_close($ch);
+
+    if ($body === false) {
+        return ['ok' => false, 'status' => $status ?: 0, 'error' => $errno ? ($errstr ?: ('cURL error ' . $errno)) : 'Request failed'];
+    }
+
+    $json = json_decode($body, true);
+    if ($json === null && json_last_error() !== JSON_ERROR_NONE) {
+        return ['ok' => false, 'status' => $status ?: 0, 'error' => 'Invalid JSON response', 'body' => $body];
+    }
+
+    return ['ok' => ($status >= 200 && $status < 300), 'status' => $status, 'json' => $json, 'body' => $body];
+}
+
+$q = isset($_GET['q']) ? trim((string)$_GET['q']) : '';
+$year = isset($_GET['year']) ? trim((string)$_GET['year']) : '';
+
+if ($q === '') {
+    respond(['data' => []]);
+}
+
+// Prefer environment variable; fall back to existing hardcoded key.
+$apiKey = getenv('TMDB_API_KEY');
+if ($apiKey === false || trim($apiKey) === '') {
+    // Legacy hardcoded key (kept for backward compatibility with previous config.php usage)
+    $apiKey = '2a4d9a050d6d63fce7fc42f4ab06b3ea';
+}
+
 $params = [
-    'query' => $query,
+    'api_key' => $apiKey,
+    'query' => $q,
 ];
 
-// Optional year filter (TMDB uses primary_release_year for movie search)
+// Optional year filter.
 if ($year !== '' && preg_match('/^\d{4}$/', $year)) {
-    $params['primary_release_year'] = $year;
+    $params['year'] = $year;
 }
 
-$url = TMDB_API_BASE_URL . '/search/movie?' . http_build_query($params);
+$url = 'https://api.themoviedb.org/3/search/movie?' . http_build_query($params);
 
-// http_json() is expected to handle auth headers / bearer token.
 $res = http_json($url);
-
-$results = [];
-if (is_array($res) && isset($res['results']) && is_array($res['results'])) {
-    $results = $res['results'];
+if (!$res['ok'] || !is_array($res['json'] ?? null)) {
+    // Always return valid legacy JSON.
+    respond(['data' => []]);
 }
 
-// Determine base image URL for poster mapping (legacy frontend expects this)
-$baseImageUrl = '';
-if (defined('TMDB_IMAGE_BASE_URL') && TMDB_IMAGE_BASE_URL) {
-    // If config provides a base image URL, prefer it.
-    $baseImageUrl = rtrim(TMDB_IMAGE_BASE_URL, '/');
-} else {
-    // Fallback to TMDB's default image host path
-    $baseImageUrl = 'https://image.tmdb.org/t/p/w500';
+$results = $res['json']['results'] ?? [];
+if (!is_array($results)) {
+    respond(['data' => []]);
 }
 
 $data = [];
-foreach ($results as $m) {
-    if (!is_array($m)) {
+foreach ($results as $item) {
+    if (!is_array($item)) {
         continue;
     }
 
-    $releaseDate = isset($m['release_date']) ? (string)$m['release_date'] : '';
-    $releaseYear = '';
-    if ($releaseDate !== '' && preg_match('/^(\d{4})-\d{2}-\d{2}$/', $releaseDate, $mm)) {
-        $releaseYear = $mm[1];
-    }
+    $posterPath = isset($item['poster_path']) && is_string($item['poster_path']) ? $item['poster_path'] : '';
+    $image = $posterPath !== '' ? ('https://image.tmdb.org/t/p/w200' . $posterPath) : '';
 
-    // Apply year filter defensively as well (in case TMDB ignores/changes params)
-    if ($year !== '' && preg_match('/^\d{4}$/', $year)) {
-        if ($releaseYear !== '' && $releaseYear !== $year) {
-            continue;
-        }
-        // If no release year exists, let it pass (legacy behavior typically did).
-    }
-
-    $posterPath = isset($m['poster_path']) ? (string)$m['poster_path'] : '';
-    $poster = null;
-    if ($posterPath !== '') {
-        // Legacy mapping: provide full poster URL
-        $poster = $baseImageUrl . '/' . ltrim($posterPath, '/');
-    }
-
+    // Legacy-ish fields: keep broadly compatible and include the requested 'image' field.
     $data[] = [
-        // Preserve commonly used legacy keys
-        'id' => $m['id'] ?? null,
-        'title' => $m['title'] ?? ($m['name'] ?? ''),
-        'original_title' => $m['original_title'] ?? null,
-        'overview' => $m['overview'] ?? null,
-        'release_date' => $releaseDate ?: null,
-        'year' => $releaseYear ?: null,
-        'poster_path' => $posterPath ?: null,
-        'poster' => $poster,
-        // Frontend expects baseImageUrl present (previous version behavior)
-        'baseImageUrl' => $baseImageUrl,
-        // Keep a couple of extra fields if present
-        'vote_average' => $m['vote_average'] ?? null,
-        'popularity' => $m['popularity'] ?? null,
+        'id' => $item['id'] ?? null,
+        'title' => $item['title'] ?? ($item['name'] ?? ''),
+        'original_title' => $item['original_title'] ?? '',
+        'release_date' => $item['release_date'] ?? '',
+        'year' => (isset($item['release_date']) && is_string($item['release_date']) && strlen($item['release_date']) >= 4)
+            ? substr($item['release_date'], 0, 4)
+            : '',
+        'overview' => $item['overview'] ?? '',
+        'vote_average' => $item['vote_average'] ?? null,
+        'image' => $image,
     ];
 }
 
-header('Content-Type: application/json; charset=utf-8');
-echo json_encode(['data' => $data]);
+respond(['data' => $data]);
