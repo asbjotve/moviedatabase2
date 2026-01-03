@@ -339,6 +339,21 @@ try {
         }));
     }
 
+// Map TVDB image fields to legacy 'image' used by frontend
+foreach ($data as &$item) {
+    if (!is_array($item)) continue;
+
+    // Prefer thumbnail when present; otherwise image_url
+    if (!isset($item['image']) || $item['image'] === '') {
+        if (isset($item['thumbnail']) && is_string($item['thumbnail']) && $item['thumbnail'] !== '') {
+            $item['image'] = $item['thumbnail'];
+        } elseif (isset($item['image_url']) && is_string($item['image_url']) && $item['image_url'] !== '') {
+            $item['image'] = $item['image_url'];
+        }
+    }
+}
+unset($item);
+    
     $out = ['data' => $data];
     if ($debug) {
         $out['debug'] = $debugInfo;
