@@ -237,7 +237,12 @@ function get_tvdb_token(bool $debug = false, array &$debugInfo = []): string {
 
 // ---- Request handling ----
 
-$query = isset($_GET['query']) ? trim((string)$_GET['query']) : '';
+$query = '';
+if (isset($_GET['query'])) {
+    $query = trim((string)$_GET['query']);
+} elseif (isset($_GET['q'])) {
+    $query = trim((string)$_GET['q']);
+}
 $type = isset($_GET['type']) ? trim((string)$_GET['type']) : '';
 $year = isset($_GET['year']) ? (int)$_GET['year'] : 0;
 $debug = isset($_GET['debug']) && (string)$_GET['debug'] === '1';
