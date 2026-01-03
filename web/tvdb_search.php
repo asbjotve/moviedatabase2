@@ -256,13 +256,17 @@ $debugInfo = [];
 try {
     $token = get_tvdb_token($debug, $debugInfo);
 
-    $params = ['query' => $query];
-    // Pass through type parameter
-    if ($type !== '') {
-        $params['type'] = $type;
-    }
+   $params = ['query' => $query];
+// Pass through type parameter
+if ($type !== '') {
+    $params['type'] = $type;
+}
+// Match Swagger: forward year to TVDB
+if ($year > 0) {
+    $params['year'] = (string)$year;
+}
 
-    $url = 'https://api4.thetvdb.com/v4/search?' . http_build_query($params);
+$url = 'https://api4.thetvdb.com/v4/search?' . http_build_query($params);
 
     $resp = http_json('GET', $url, [
         'Authorization' => 'Bearer ' . $token,
@@ -314,29 +318,6 @@ try {
     $data = $resp['body']['data'] ?? [];
     if (!is_array($data)) {
         $data = [];
-    }
-
-    // Keep year filtering behavior
-    if ($year > 0) {
-        $data = array_values(array_filter($data, function ($item) use ($year) {
-            if (!is_array($item)) {
-                return false;
-            }
-            // Try common fields
-            foreach (['year', 'firstAired', 'releaseDate', 'premiereDate'] as $k) {
-                if (!isset($item[$k]) || $item[$k] === null || $item[$k] === '') {
-                    continue;
-                }
-                $v = $item[$k];
-                if (is_numeric($v)) {
-                    return (int)$v === $year;
-                }
-                if (is_string($v) && preg_match('/^(\d{4})/', $v, $m)) {
-                    return (int)$m[1] === $year;
-                }
-            }
-            return true; // if we cannot determine year, keep it
-        }));
     }
 
 // Map TVDB image fields to legacy 'image' used by frontend
