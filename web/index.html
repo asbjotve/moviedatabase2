@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="no">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>TVDB og TMDB Søkesystem</title>
+  <!-- Bootstrap CSS -->
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+  <style>
+    img { max-width: 60px; margin-right: 8px; border-radius: 5px; box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1); }
+    .meta { color: #555; font-size: .95rem; }
+  </style>
+</head>
+<body>
+  <div class="container py-5">
+    <button type="button" class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#searchModal">
+      Åpne søk
+    </button>
+  </div>
+
+  <!-- Bootstrap Modal -->
+  <div class="modal fade" id="searchModal" tabindex="-1" aria-labelledby="searchModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-lg">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title" id="searchModalLabel">Søk i databaser</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+        </div>
+        <div class="modal-body">
+          <div>
+            <label class="form-check">
+              <input type="radio" class="form-check-input" name="database" value="tvdb" checked> TVDB (filmer/serier)
+            </label>
+            <label class="form-check">
+              <input type="radio" class="form-check-input" name="database" value="tmdb"> TMDB (filmer)
+            </label>
+          </div>
+
+          <div id="tvdb-options" class="mt-3">
+            <label for="type">Type (TVDB)</label>
+            <select id="type" class="form-select">
+              <option value="series" selected>Serier</option>
+              <option value="movie">Filmer</option>
+              <option value="">Både filmer og serier</option>
+            </select>
+          </div>
+
+          <label for="q" class="mt-3">Tittel</label>
+          <input id="q" type="text" class="form-control" placeholder="Skriv minst 2 tegn..." autocomplete="off" />
+
+          <ul id="results" class="list-unstyled mt-3"></ul>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Lukk</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Bootstrap JS -->
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+
+  <script>
+    const qEl = document.getElementById('q');
+    const typeEl = document.getElementById('type');
+    const tvdbOptions = document.getElementById('tvdb-options');
+    const resultsEl = document.getElementById('results');
+    const databaseRadios = document.querySelectorAll('input[name="database"]');
+
+    let currentDatabase = 'tvdb';
+    let debounce;
+
+    databaseRadios.forEach(radio => {
+      radio.addEventListener('change', () => {
+        currentDatabase = radio.value;
+        resultsEl.innerHTML = ''; // Tøm resultater ved bytte
+        tvdbOptions.style.display = currentDatabase === 'tvdb' ? 'block' : 'none';
+      });
+    });
+
+    function render(items) {
+      resultsEl.innerHTML = '';
+      if (!items || items.length === 0) {
+        resultsEl.innerHTML = '<li class="text-muted">Ingen treff.</li>';
+        return;
+      }
+      for (const item of items) {
+        const name = item.name ?? item.title ?? '(uten navn)';
+        const year = item.firstAired ? item.firstAired.split('-')[0] : (item.year ?? 'Ukjent');
+        const image = item.image || 'path/to/default-image.jpg';
+        const li = document.createElement('li');
+        li.className = 'd-flex align-items-center border p-2 mb-2 rounded';
+        li.innerHTML = `
+          <img src="${image}" alt="${name}">
+          <div>
+            <strong>${name}</strong> <span class="meta">(${year}) — ID: ${item.id}</span>
+          </div>
+        `;
+        resultsEl.appendChild(li);
+      }
+    }
+
+    async function search() {
+      const q = qEl.value.trim();
+
+      if (q.length < 2) {
+        resultsEl.innerHTML = '';
+        return;
+      }
+
+      // Parsing for årstall fra input
+      const yearMatch = q.match(/\b(19|20)\d{2}\b/);
+      let year = '';
+      let query = q;
+
+      if (yearMatch) {
+        year = yearMatch[0];
+        query = q.replace(year, '').trim();
+      }
+
+      const params = new URLSearchParams({ q: query });
+      if (year) params.set('year', year);
+
+      let endpoint;
+
+      if (currentDatabase === 'tvdb') {
+        const type = typeEl.value;
+        if (type) params.set('type', type);
+        endpoint = '/tvdb_search.php';
+      } else {
+        endpoint = '/tmdb_search.php'; // For TMDB kall
+      }
+
+      const res = await fetch(`${endpoint}?${params.toString()}`, {
+        headers: { 'Accept': 'application/json' }
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        resultsEl.innerHTML = `<li class="text-danger">Feil: ${data.error ?? 'Ukjent feil'}</li>`;
+        return;
+      }
+
+      render(data.data ?? []);
+    }
+
+    qEl.addEventListener('input', () => {
+      clearTimeout(debounce);
+      debounce = setTimeout(search, 350);
+    });
+
+    typeEl.addEventListener('change', () => {
+      if (currentDatabase === 'tvdb') { // TMDB trenger ikke dropdown
+        clearTimeout(debounce);
+        debounce = setTimeout(search, 0);
+      }
+    });
+  </script>
+</body>
+</html>
