@@ -93,7 +93,7 @@ function respond_json($payload, int $httpStatus = 200): void
 
 // ---- Existing script logic (preserved/compatible) ----
 
-$apiKey = getenv('TMDB_API_KEY');
+$apiKey = "43e59c66937eff8f235c170a389fa3d1";
 if (!$apiKey) {
     // Keep headers; ensure valid JSON and proper exit
     respond_json([
