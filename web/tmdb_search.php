@@ -39,7 +39,7 @@ if ($yearParamRaw !== null) {
 }
 
 // Build TMDB request
-$endpoint = 'https://api.themoviedb.org/3/search/multi';
+$endpoint = 'https://api.themoviedb.org/3/search/movie';
 $params = [
     'api_key' => $apiKey,
     'query' => $query,
@@ -100,77 +100,44 @@ if (!is_array($decoded)) {
 
 $results = isset($decoded['results']) && is_array($decoded['results']) ? $decoded['results'] : [];
 
-// Client-side filtering by year: parse best available year per item.
-// - movie: release_date
-// - tv: first_air_date
-// - person/others: no date -> no year, cannot match
-if ($year !== null) {
-    $results = array_values(array_filter($results, function ($item) use ($year) {
-        if (!is_array($item)) {
-            return false;
-        }
-        $mediaType = isset($item['media_type']) ? (string)$item['media_type'] : '';
-
-        $dateStr = '';
-        if ($mediaType === 'movie') {
-            $dateStr = isset($item['release_date']) ? (string)$item['release_date'] : '';
-        } elseif ($mediaType === 'tv') {
-            $dateStr = isset($item['first_air_date']) ? (string)$item['first_air_date'] : '';
-        } else {
-            // For person/others we can't reliably match year; exclude when year is requested.
-            return false;
-        }
-
-        if (preg_match('/^(\d{4})-\d{2}-\d{2}$/', $dateStr, $m)) {
-            return ((int)$m[1]) === $year;
-        }
-        // If date missing/unparseable, exclude when filtering by year.
-        return false;
-    }));
-}
-
-// Keep legacy output mapping:
-// return array of simplified results, and include debug output.
-$out = [];
+// Map results to legacy fields expected by frontend
+$mapped = [];
 foreach ($results as $r) {
     if (!is_array($r)) continue;
 
-    $mediaType = isset($r['media_type']) ? (string)$r['media_type'] : '';
+    $releaseDate = isset($r['release_date']) ? (string)$r['release_date'] : '';
+    $yearStr = '';
+    if (preg_match('/^(\\d{4})-/', $releaseDate, $m)) {
+        $yearStr = $m[1];
+    }
 
-    // Legacy mapping fields
-    $title = '';
-    $originalTitle = '';
-    $date = '';
+    $posterPath = isset($r['poster_path']) ? (string)$r['poster_path'] : '';
+    $image = $posterPath !== '' ? ('https://image.tmdb.org/t/p/w200' . $posterPath) : '';
 
-    if ($mediaType === 'movie') {
-        $title = isset($r['title']) ? (string)$r['title'] : '';
-        $originalTitle = isset($r['original_title']) ? (string)$r['original_title'] : $title;
-        $date = isset($r['release_date']) ? (string)$r['release_date'] : '';
-    } elseif ($mediaType === 'tv') {
-        $title = isset($r['name']) ? (string)$r['name'] : '';
-        $originalTitle = isset($r['original_name']) ? (string)$r['original_name'] : $title;
-        $date = isset($r['first_air_date']) ? (string)$r['first_air_date'] : '';
-    } else {
-        // Keep legacy behavior: skip non movie/tv
+    // If year filter is requested, enforce it here too (extra safety)
+    if ($year !== null && $yearStr !== (string)$year) {
         continue;
     }
 
-    $out[] = [
-        'id' => isset($r['id']) ? $r['id'] : null,
-        'type' => $mediaType,
-        'title' => $title,
-        'original_title' => $originalTitle,
-        'overview' => isset($r['overview']) ? (string)$r['overview'] : '',
-        'poster_path' => isset($r['poster_path']) ? (string)$r['poster_path'] : null,
-        'backdrop_path' => isset($r['backdrop_path']) ? (string)$r['backdrop_path'] : null,
-        'vote_average' => isset($r['vote_average']) ? $r['vote_average'] : null,
-        'vote_count' => isset($r['vote_count']) ? $r['vote_count'] : null,
-        'popularity' => isset($r['popularity']) ? $r['popularity'] : null,
-        'date' => $date,
+    $mapped[] = [
+        'id' => $r['id'] ?? null,
+        'title' => $r['title'] ?? '',
+        'year' => $yearStr,
+        'image' => $image,
+        'overview' => $r['overview'] ?? '',
+        'original_title' => $r['original_title'] ?? '',
+        'vote_average' => $r['vote_average'] ?? null,
+        'vote_count' => $r['vote_count'] ?? null,
+        'popularity' => $r['popularity'] ?? null,
     ];
 }
 
-echo json_encode([
-    'results' => $out,
-    'debug' => $debug,
-]);
+$out = [
+    'data' => $mapped,
+];
+
+if (isset($_GET['debug']) && $_GET['debug'] == '1') {
+    $out['_debug'] = $debug;
+}
+
+echo json_encode($out);
